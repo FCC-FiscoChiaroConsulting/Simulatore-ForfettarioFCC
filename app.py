@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Database codici ATECO (abbreviato per brevità)
+# Database codici ATECO
 COEFFICIENTI_ATECO = {
     "10": 40, "11": 40, "13": 67, "14": 67, "15": 67, "16": 67, "17": 67, "18": 67,
     "19": 40, "20": 67, "21": 67, "22": 67, "24": 67, "25": 67, "26": 67, "27": 67,
@@ -147,40 +147,42 @@ with col2:
     st.write(f"**TOTALE:** € {risultato['totale']:,.2f}")
 
 # ============================================================================
-# SEZIONE NEWSLETTER CON DEBUG MIGLIORATO
+# RACCOLTA EMAIL CON PULIZIA AUTOMATICA URL
 # ============================================================================
 st.markdown("---")
 st.header("📬 Ricevi Aggiornamenti Fiscali")
 
-# DEBUG: Mostra le environment variables (solo per debug, RIMUOVI in produzione!)
-with st.expander("🔍 DEBUG - Verifica Configurazione (clicca per espandere)"):
-    st.write("**Environment Variables configurate:**")
+# DEBUG
+with st.expander("🔍 DEBUG - Verifica Configurazione"):
+    st.write("**Environment Variables:**")
 
-    env_vars = {
-        "GSHEETS_SPREADSHEET": os.getenv("GSHEETS_SPREADSHEET"),
-        "GSHEETS_TYPE": os.getenv("GSHEETS_TYPE"),
-        "GSHEETS_CLIENT_EMAIL": os.getenv("GSHEETS_CLIENT_EMAIL"),
-        "GSHEETS_PROJECT_ID": os.getenv("GSHEETS_PROJECT_ID"),
-    }
+    spreadsheet_raw = os.getenv("GSHEETS_SPREADSHEET", "")
+    # PULIZIA AUTOMATICA URL
+    spreadsheet_clean = spreadsheet_raw.strip().replace("\n", "").replace("\r", "").replace("\t", "")
+    # Rimuovi anche ?usp=sharing se presente
+    if "?usp=sharing" in spreadsheet_clean:
+        spreadsheet_clean = spreadsheet_clean.split("?usp=sharing")[0]
 
-    for key, value in env_vars.items():
-        if value:
-            if key == "GSHEETS_SPREADSHEET":
-                st.success(f"✅ {key}: {value[:50]}...")
-            elif key == "GSHEETS_CLIENT_EMAIL":
-                st.success(f"✅ {key}: {value}")
-            else:
-                st.success(f"✅ {key}: configurato")
-        else:
-            st.error(f"❌ {key}: MANCANTE!")
+    st.write(f"**URL RAW:** `{repr(spreadsheet_raw)}`")
+    st.write(f"**URL PULITO:** `{spreadsheet_clean}`")
+    st.write(f"**Lunghezza:** {len(spreadsheet_clean)} caratteri")
 
-    # Verifica PRIVATE_KEY
+    if spreadsheet_clean:
+        st.success(f"✅ GSHEETS_SPREADSHEET: {spreadsheet_clean[:60]}...")
+    else:
+        st.error("❌ GSHEETS_SPREADSHEET: MANCANTE!")
+
+    client_email = os.getenv("GSHEETS_CLIENT_EMAIL")
+    if client_email:
+        st.success(f"✅ GSHEETS_CLIENT_EMAIL: {client_email}")
+    else:
+        st.error("❌ GSHEETS_CLIENT_EMAIL: MANCANTE!")
+
     private_key = os.getenv("GSHEETS_PRIVATE_KEY")
-    if private_key:
-        if private_key.startswith('"') and "BEGIN PRIVATE KEY" in private_key:
-            st.success("✅ GSHEETS_PRIVATE_KEY: formato corretto")
-        else:
-            st.warning("⚠️ GSHEETS_PRIVATE_KEY: potrebbe avere formato errato")
+    if private_key and len(private_key) > 1000:
+        st.success(f"✅ GSHEETS_PRIVATE_KEY: {len(private_key)} caratteri (OK)")
+    elif private_key:
+        st.warning(f"⚠️ GSHEETS_PRIVATE_KEY: {len(private_key)} caratteri (troppo corta!)")
     else:
         st.error("❌ GSHEETS_PRIVATE_KEY: MANCANTE!")
 
@@ -193,30 +195,39 @@ with st.form("newsletter_form"):
 
     if submitted and email:
         try:
-            st.info("🔄 Tentativo di connessione a Google Sheets...")
+            st.info("🔄 Connessione a Google Sheets...")
 
             # Crea connessione
             conn = st.connection("gsheets", type=GSheetsConnection)
             st.success("✅ Connessione creata")
 
-            # Leggi URL spreadsheet
-            spreadsheet_url = os.getenv("GSHEETS_SPREADSHEET")
-            st.info(f"📄 Spreadsheet: {spreadsheet_url[:50]}...")
+            # PULIZIA AUTOMATICA URL
+            spreadsheet_raw = os.getenv("GSHEETS_SPREADSHEET", "")
+            spreadsheet_url = spreadsheet_raw.strip().replace("\n", "").replace("\r", "").replace("\t", "").replace(" ", "")
+
+            # Rimuovi ?usp=sharing se presente
+            if "?usp=sharing" in spreadsheet_url:
+                spreadsheet_url = spreadsheet_url.split("?usp=sharing")[0]
+
+            # Rimuovi eventuali virgolette
+            spreadsheet_url = spreadsheet_url.strip('"').strip("'")
+
+            st.info(f"📄 URL pulito: {spreadsheet_url[:60]}...")
 
             # Leggi dati
             try:
-                st.info("🔄 Lettura dati esistenti...")
+                st.info("🔄 Lettura dati...")
                 df_esistente = conn.read(
                     spreadsheet=spreadsheet_url,
                     worksheet="Iscrizioni",
                     ttl=0
                 )
-                st.success(f"✅ Lettura OK - {len(df_esistente)} righe trovate")
+                st.success(f"✅ Lettura OK - {len(df_esistente)} righe")
 
                 if df_esistente.empty or 'Email' not in df_esistente.columns:
                     df_esistente = pd.DataFrame(columns=['Email', 'Data', 'Timestamp'])
             except Exception as e:
-                st.warning(f"⚠️ Errore lettura (creo nuovo): {str(e)}")
+                st.warning(f"⚠️ Creo nuovo foglio: {str(e)}")
                 df_esistente = pd.DataFrame(columns=['Email', 'Data', 'Timestamp'])
 
             # Verifica duplicati
@@ -224,7 +235,7 @@ with st.form("newsletter_form"):
                 st.warning("⚠️ Email già iscritta!")
             else:
                 # Aggiungi email
-                st.info("🔄 Aggiunta nuova email...")
+                st.info("🔄 Salvataggio...")
                 nuova_iscrizione = pd.DataFrame({
                     'Email': [email],
                     'Data': [datetime.now().strftime("%Y-%m-%d")],
@@ -233,8 +244,7 @@ with st.form("newsletter_form"):
 
                 df_aggiornato = pd.concat([df_esistente, nuova_iscrizione], ignore_index=True)
 
-                # Scrivi su Google Sheets
-                st.info("🔄 Scrittura su Google Sheets...")
+                # Scrivi
                 conn.update(
                     spreadsheet=spreadsheet_url,
                     worksheet="Iscrizioni",
@@ -245,20 +255,15 @@ with st.form("newsletter_form"):
                 st.balloons()
 
         except Exception as e:
-            st.error(f"❌ ERRORE DETTAGLIATO: {str(e)}")
+            st.error(f"❌ ERRORE: {str(e)}")
             st.code(str(e))
 
-            st.markdown("---")
-            st.warning("**Possibili cause:**")
-            st.write("1. Google Sheet non condiviso con service account")
-            st.write("2. Environment Variables mancanti o errate")
-            st.write("3. API Google Sheets/Drive non abilitate")
-
-            st.info("**Verifica:**")
-            st.write("- Espandi 'DEBUG' sopra per vedere le variabili")
-            st.write("- Controlla che l'email service account sia 'Editor' del foglio")
+            st.warning("**Verifica:**")
+            st.write("1. Google Sheet condiviso con service account")
+            st.write("2. URL corretto (espandi DEBUG)")
+            st.write("3. API abilitate su Google Cloud")
 
 # FOOTER
 st.markdown("---")
-st.info("**Note**: Aliquota 5% per startup, 15% ordinaria. Riduzioni contributive per Artigiani/Commercianti.")
-st.markdown("**Fisco Chiaro Consulting** | © 2025 | info@fiscochiaroconsulting.it")
+st.info("**Note**: Aliquota 5% startup, 15% ordinaria. Riduzioni per Artigiani/Commercianti.")
+st.markdown("**Fisco Chiaro Consulting** | © 2025")
