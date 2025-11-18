@@ -1,17 +1,25 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from streamlit_gsheets import GSheetsConnection
-import os
+import locale
+
+# Prova a impostare locale italiano
+try:
+    locale.setlocale(locale.LC_ALL, 'it_IT.UTF-8')
+except:
+    try:
+        locale.setlocale(locale.LC_ALL, 'it_IT')
+    except:
+        pass
 
 # Configurazione pagina
 st.set_page_config(
-    page_title="Simulatore Forfettario 2025",
+    page_title="Simulatore Regime Forfettario 2025",
     page_icon="📊",
     layout="wide"
 )
 
-# Database codici ATECO
+# Database completo codici ATECO con coefficienti
 COEFFICIENTI_ATECO = {
     "10": 40, "11": 40, "13": 67, "14": 67, "15": 67, "16": 67, "17": 67, "18": 67,
     "19": 40, "20": 67, "21": 67, "22": 67, "24": 67, "25": 67, "26": 67, "27": 67,
@@ -25,7 +33,23 @@ COEFFICIENTI_ATECO = {
     "461": 62,
 }
 
+def formatta_euro(valore):
+    """Formatta un numero in euro con separatori italiani"""
+    return f"€ {valore:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+def formatta_numero(valore, decimali=0):
+    """Formatta un numero con separatori italiani"""
+    if decimali == 0:
+        return f"{valore:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    else:
+        return f"{valore:,.{decimali}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+def formatta_percentuale(valore, decimali=2):
+    """Formatta una percentuale con virgola italiana"""
+    return f"{valore:.{decimali}f}%".replace(".", ",")
+
 def get_coefficiente(codice_ateco):
+    """Cerca il coefficiente per un codice ATECO"""
     codice = str(codice_ateco).strip().replace(".", "")
     if codice in COEFFICIENTI_ATECO:
         return COEFFICIENTI_ATECO[codice]
@@ -39,6 +63,7 @@ def get_coefficiente(codice_ateco):
 
 def calcola_forfettario(ricavi, coefficiente, contributi_anno_prec, 
                         aliquota_imposta, tipo_cassa, riduzione_contrib=0):
+    """Calcola imposte e contributi per regime forfettario"""
     reddito_imponibile_lordo = ricavi * (coefficiente / 100)
     reddito_imponibile_netto = reddito_imponibile_lordo - contributi_anno_prec
     imposta_sostitutiva = reddito_imponibile_netto * (aliquota_imposta / 100)
@@ -82,27 +107,52 @@ def calcola_forfettario(ricavi, coefficiente, contributi_anno_prec,
         'riduzione': riduzione_applicata
     }
 
-# Titolo
+# ============================================================================
+# HEADER
+# ============================================================================
 st.title("📊 Simulatore Regime Forfettario 2025")
 st.markdown("**by Fisco Chiaro Consulting**")
 st.markdown("---")
 
+# ============================================================================
+# LAYOUT A DUE COLONNE
+# ============================================================================
 col1, col2 = st.columns([1, 1])
 
+# COLONNA SINISTRA - INPUT
 with col1:
     st.header("📝 Parametri Input")
-    ricavi = st.number_input("Ricavi annui (€)", min_value=0, max_value=85000, value=50000, step=1000)
-    metodo = st.radio("Come vuoi inserire l'attività?", ["Codice ATECO", "Settore generico"])
 
+    # Ricavi annui
+    ricavi = st.number_input(
+        "Ricavi annui (€)", 
+        min_value=0, 
+        max_value=85000, 
+        value=50000, 
+        step=1000,
+        help="Inserisci i ricavi annui previsti (max 85.000€ per forfettario)"
+    )
+
+    # Metodo inserimento attività
+    metodo = st.radio(
+        "Come vuoi inserire l'attività?", 
+        ["Codice ATECO", "Settore generico"]
+    )
+
+    # Coefficiente di redditività
     if metodo == "Codice ATECO":
-        st.info("💡 Inserisci il tuo codice ATECO")
-        codice_ateco = st.text_input("Codice ATECO", value="", placeholder="es. 69.20.11")
+        st.info("💡 Inserisci il tuo codice ATECO (es. 69.20.11, 47.11.40, 86.90.29)")
+        codice_ateco = st.text_input(
+            "Codice ATECO", 
+            value="", 
+            placeholder="es. 69.20.11 o 692011"
+        )
         if codice_ateco:
             coefficiente = get_coefficiente(codice_ateco)
             if coefficiente:
-                st.success(f"✅ Coefficiente: **{coefficiente}%**")
+                st.success(f"✅ Coefficiente trovato: **{coefficiente}%**")
             else:
-                st.warning("⚠️ Codice ATECO non trovato.")
+                st.warning("⚠️ Codice ATECO non trovato. Uso coefficiente standard 67%")
                 coefficiente = 67
         else:
             coefficiente = 67
@@ -117,153 +167,110 @@ with col1:
         ])
         coefficiente = int(attivita.split("(")[1].split("%")[0])
 
-    contributi_prec = st.number_input("Contributi anno precedente (€)", min_value=0, max_value=30000, value=5000, step=500)
-    aliquota = st.radio("Aliquota imposta sostitutiva", [5, 15], 
-                       format_func=lambda x: f"{x}% - {'Startup' if x == 5 else 'Ordinaria'}")
-    cassa = st.selectbox("Cassa previdenziale", ["Gestione Separata INPS", "Artigiani e Commercianti"])
+    # Contributi anno precedente
+    contributi_prec = st.number_input(
+        "Contributi versati anno precedente (€)", 
+        min_value=0, 
+        max_value=30000, 
+        value=5000, 
+        step=500,
+        help="Inserisci i contributi INPS versati l'anno scorso (deducibili dal reddito)"
+    )
 
+    # Aliquota imposta sostitutiva
+    aliquota = st.radio(
+        "Aliquota imposta sostitutiva", 
+        [5, 15], 
+        format_func=lambda x: f"{x}% - {'Startup (primi 5 anni)' if x == 5 else 'Ordinaria'}"
+    )
+
+    # Cassa previdenziale
+    cassa = st.selectbox(
+        "Cassa previdenziale", 
+        ["Gestione Separata INPS", "Artigiani e Commercianti"]
+    )
+
+    # Riduzione contributiva (solo per Artigiani/Commercianti)
     riduzione = 0
     if cassa == "Artigiani e Commercianti":
-        riduzione = st.selectbox("Riduzione contributiva", [0, 35, 50],
-            format_func=lambda x: {0: "Nessuna", 35: "35%", 50: "50%"}[x])
+        riduzione = st.selectbox(
+            "Riduzione contributiva", 
+            [0, 35, 50],
+            format_func=lambda x: {
+                0: "Nessuna riduzione",
+                35: "Riduzione 35% (da rinnovare annualmente)",
+                50: "Riduzione 50% (nuove attività 2025, primi 36 mesi)"
+            }[x]
+        )
 
+# COLONNA DESTRA - RISULTATI
 with col2:
     st.header("📊 Risultati")
-    risultato = calcola_forfettario(ricavi, coefficiente, contributi_prec, aliquota, cassa, riduzione)
 
-    st.metric("Tax Rate Effettivo", f"{risultato['tax_rate']:.2f}%")
+    # Calcola risultati
+    risultato = calcola_forfettario(
+        ricavi, 
+        coefficiente, 
+        contributi_prec, 
+        aliquota, 
+        cassa, 
+        riduzione
+    )
+
+    # Metrica principale - CON FORMATTAZIONE ITALIANA
+    st.metric(
+        "Tax Rate Effettivo", 
+        formatta_percentuale(risultato['tax_rate']),
+        help="Percentuale totale di imposte e contributi sui ricavi"
+    )
+
+    # Metriche netto - CON FORMATTAZIONE ITALIANA
     col_a, col_b = st.columns(2)
     with col_a:
-        st.metric("Netto Annuo", f"€ {risultato['netto']:,.0f}")
+        st.metric(
+            "Netto Annuo", 
+            formatta_euro(risultato['netto']),
+            help="Guadagno netto dopo imposte e contributi"
+        )
     with col_b:
-        st.metric("Netto Mensile", f"€ {risultato['netto']/12:,.0f}")
+        st.metric(
+            "Netto Mensile", 
+            formatta_euro(risultato['netto']/12),
+            help="Guadagno netto medio mensile"
+        )
 
+    # Dettaglio calcolo - CON FORMATTAZIONE ITALIANA
     st.markdown("---")
     st.subheader("Dettaglio Calcolo")
-    st.write(f"**Coefficiente:** {coefficiente}%")
-    st.write(f"**Reddito lordo:** € {risultato['reddito_lordo']:,.2f}")
-    st.write(f"**Imposta ({aliquota}%):** € {risultato['imposta']:,.2f}")
-    st.write(f"**Contributi INPS:** € {risultato['contributi']:,.2f}")
-    st.write(f"**TOTALE:** € {risultato['totale']:,.2f}")
+
+    st.write(f"**Coefficiente redditività:** {coefficiente}%")
+    st.write(f"**Reddito imponibile lordo:** {formatta_euro(risultato['reddito_lordo'])}")
+    st.write(f"**Contributi anno prec. dedotti:** {formatta_euro(contributi_prec)}")
+    st.write(f"**Reddito imponibile netto:** {formatta_euro(risultato['reddito_netto'])}")
+
+    st.markdown("---")
+
+    st.write(f"**Imposta sostitutiva ({aliquota}%):** {formatta_euro(risultato['imposta'])}")
+    st.write(f"**Contributi INPS:** {formatta_euro(risultato['contributi'])}")
+
+    if risultato['riduzione'] > 0:
+        st.info(f"✅ Applicata riduzione contributiva del {risultato['riduzione']}%")
+
+    st.markdown("---")
+    st.write(f"**TOTALE DA VERSARE:** {formatta_euro(risultato['totale'])}")
 
 # ============================================================================
-# RACCOLTA EMAIL CON PULIZIA AUTOMATICA URL
+# FOOTER CON NOTE
 # ============================================================================
 st.markdown("---")
-st.header("📬 Ricevi Aggiornamenti Fiscali")
+st.info("""
+**ℹ️ Note importanti:**
+- **Aliquota 5%**: valida per 5 anni per nuove attività (requisiti da verificare)
+- **Riduzione 35%**: domanda entro 28 febbraio di ogni anno
+- **Riduzione 50%**: solo per nuove iscrizioni 2025, valida per 36 mesi
+- Questo simulatore è indicativo. Per un calcolo preciso consulta un commercialista.
+""")
 
-# DEBUG
-with st.expander("🔍 DEBUG - Verifica Configurazione"):
-    st.write("**Environment Variables:**")
-
-    spreadsheet_raw = os.getenv("GSHEETS_SPREADSHEET", "")
-    # PULIZIA AUTOMATICA URL
-    spreadsheet_clean = spreadsheet_raw.strip().replace("\n", "").replace("\r", "").replace("\t", "")
-    # Rimuovi anche ?usp=sharing se presente
-    if "?usp=sharing" in spreadsheet_clean:
-        spreadsheet_clean = spreadsheet_clean.split("?usp=sharing")[0]
-
-    st.write(f"**URL RAW:** `{repr(spreadsheet_raw)}`")
-    st.write(f"**URL PULITO:** `{spreadsheet_clean}`")
-    st.write(f"**Lunghezza:** {len(spreadsheet_clean)} caratteri")
-
-    if spreadsheet_clean:
-        st.success(f"✅ GSHEETS_SPREADSHEET: {spreadsheet_clean[:60]}...")
-    else:
-        st.error("❌ GSHEETS_SPREADSHEET: MANCANTE!")
-
-    client_email = os.getenv("GSHEETS_CLIENT_EMAIL")
-    if client_email:
-        st.success(f"✅ GSHEETS_CLIENT_EMAIL: {client_email}")
-    else:
-        st.error("❌ GSHEETS_CLIENT_EMAIL: MANCANTE!")
-
-    private_key = os.getenv("GSHEETS_PRIVATE_KEY")
-    if private_key and len(private_key) > 1000:
-        st.success(f"✅ GSHEETS_PRIVATE_KEY: {len(private_key)} caratteri (OK)")
-    elif private_key:
-        st.warning(f"⚠️ GSHEETS_PRIVATE_KEY: {len(private_key)} caratteri (troppo corta!)")
-    else:
-        st.error("❌ GSHEETS_PRIVATE_KEY: MANCANTE!")
-
-with st.form("newsletter_form"):
-    col_email, col_btn = st.columns([3, 1])
-    with col_email:
-        email = st.text_input("Email", placeholder="tuaemail@esempio.it", label_visibility="collapsed")
-    with col_btn:
-        submitted = st.form_submit_button("Iscriviti", use_container_width=True)
-
-    if submitted and email:
-        try:
-            st.info("🔄 Connessione a Google Sheets...")
-
-            # Crea connessione
-            conn = st.connection("gsheets", type=GSheetsConnection)
-            st.success("✅ Connessione creata")
-
-            # PULIZIA AUTOMATICA URL
-            spreadsheet_raw = os.getenv("GSHEETS_SPREADSHEET", "")
-            spreadsheet_url = spreadsheet_raw.strip().replace("\n", "").replace("\r", "").replace("\t", "").replace(" ", "")
-
-            # Rimuovi ?usp=sharing se presente
-            if "?usp=sharing" in spreadsheet_url:
-                spreadsheet_url = spreadsheet_url.split("?usp=sharing")[0]
-
-            # Rimuovi eventuali virgolette
-            spreadsheet_url = spreadsheet_url.strip('"').strip("'")
-
-            st.info(f"📄 URL pulito: {spreadsheet_url[:60]}...")
-
-            # Leggi dati
-            try:
-                st.info("🔄 Lettura dati...")
-                df_esistente = conn.read(
-                    spreadsheet=spreadsheet_url,
-                    worksheet="Iscrizioni",
-                    ttl=0
-                )
-                st.success(f"✅ Lettura OK - {len(df_esistente)} righe")
-
-                if df_esistente.empty or 'Email' not in df_esistente.columns:
-                    df_esistente = pd.DataFrame(columns=['Email', 'Data', 'Timestamp'])
-            except Exception as e:
-                st.warning(f"⚠️ Creo nuovo foglio: {str(e)}")
-                df_esistente = pd.DataFrame(columns=['Email', 'Data', 'Timestamp'])
-
-            # Verifica duplicati
-            if email in df_esistente['Email'].values:
-                st.warning("⚠️ Email già iscritta!")
-            else:
-                # Aggiungi email
-                st.info("🔄 Salvataggio...")
-                nuova_iscrizione = pd.DataFrame({
-                    'Email': [email],
-                    'Data': [datetime.now().strftime("%Y-%m-%d")],
-                    'Timestamp': [datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
-                })
-
-                df_aggiornato = pd.concat([df_esistente, nuova_iscrizione], ignore_index=True)
-
-                # Scrivi
-                conn.update(
-                    spreadsheet=spreadsheet_url,
-                    worksheet="Iscrizioni",
-                    data=df_aggiornato
-                )
-
-                st.success("✅ Grazie per l'iscrizione!")
-                st.balloons()
-
-        except Exception as e:
-            st.error(f"❌ ERRORE: {str(e)}")
-            st.code(str(e))
-
-            st.warning("**Verifica:**")
-            st.write("1. Google Sheet condiviso con service account")
-            st.write("2. URL corretto (espandi DEBUG)")
-            st.write("3. API abilitate su Google Cloud")
-
-# FOOTER
 st.markdown("---")
-st.info("**Note**: Aliquota 5% startup, 15% ordinaria. Riduzioni per Artigiani/Commercianti.")
 st.markdown("**Fisco Chiaro Consulting** | © 2025")
+st.markdown("📧 Per consulenze personalizzate: info@fiscochiaroconsulting.it")
