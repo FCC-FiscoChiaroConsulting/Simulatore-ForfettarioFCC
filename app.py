@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Database completo codici ATECO con coefficienti
+# Database codici ATECO (abbreviato per brevità)
 COEFFICIENTI_ATECO = {
     "10": 40, "11": 40, "13": 67, "14": 67, "15": 67, "16": 67, "17": 67, "18": 67,
     "19": 40, "20": 67, "21": 67, "22": 67, "24": 67, "25": 67, "26": 67, "27": 67,
@@ -26,7 +26,6 @@ COEFFICIENTI_ATECO = {
 }
 
 def get_coefficiente(codice_ateco):
-    """Cerca il coefficiente per un codice ATECO"""
     codice = str(codice_ateco).strip().replace(".", "")
     if codice in COEFFICIENTI_ATECO:
         return COEFFICIENTI_ATECO[codice]
@@ -96,12 +95,12 @@ with col1:
     metodo = st.radio("Come vuoi inserire l'attività?", ["Codice ATECO", "Settore generico"])
 
     if metodo == "Codice ATECO":
-        st.info("💡 Inserisci il tuo codice ATECO (es. 69.20.11, 47.11.40, 86.90.29)")
-        codice_ateco = st.text_input("Codice ATECO", value="", placeholder="es. 69.20.11 o 692011")
+        st.info("💡 Inserisci il tuo codice ATECO")
+        codice_ateco = st.text_input("Codice ATECO", value="", placeholder="es. 69.20.11")
         if codice_ateco:
             coefficiente = get_coefficiente(codice_ateco)
             if coefficiente:
-                st.success(f"✅ Coefficiente trovato: **{coefficiente}%**")
+                st.success(f"✅ Coefficiente: **{coefficiente}%**")
             else:
                 st.warning("⚠️ Codice ATECO non trovato.")
                 coefficiente = 67
@@ -118,19 +117,15 @@ with col1:
         ])
         coefficiente = int(attivita.split("(")[1].split("%")[0])
 
-    contributi_prec = st.number_input("Contributi versati anno precedente (€)", min_value=0, max_value=30000, value=5000, step=500)
+    contributi_prec = st.number_input("Contributi anno precedente (€)", min_value=0, max_value=30000, value=5000, step=500)
     aliquota = st.radio("Aliquota imposta sostitutiva", [5, 15], 
-                       format_func=lambda x: f"{x}% - {'Startup (primi 5 anni)' if x == 5 else 'Ordinaria'}")
+                       format_func=lambda x: f"{x}% - {'Startup' if x == 5 else 'Ordinaria'}")
     cassa = st.selectbox("Cassa previdenziale", ["Gestione Separata INPS", "Artigiani e Commercianti"])
 
     riduzione = 0
     if cassa == "Artigiani e Commercianti":
         riduzione = st.selectbox("Riduzione contributiva", [0, 35, 50],
-            format_func=lambda x: {
-                0: "Nessuna riduzione",
-                35: "Riduzione 35% (da rinnovare annualmente)",
-                50: "Riduzione 50% (nuove attività 2025, primi 36 mesi)"
-            }[x])
+            format_func=lambda x: {0: "Nessuna", 35: "35%", 50: "50%"}[x])
 
 with col2:
     st.header("📊 Risultati")
@@ -145,17 +140,49 @@ with col2:
 
     st.markdown("---")
     st.subheader("Dettaglio Calcolo")
-    st.write(f"**Coefficiente redditività:** {coefficiente}%")
-    st.write(f"**Reddito imponibile lordo:** € {risultato['reddito_lordo']:,.2f}")
-    st.write(f"**Imposta sostitutiva ({aliquota}%):** € {risultato['imposta']:,.2f}")
+    st.write(f"**Coefficiente:** {coefficiente}%")
+    st.write(f"**Reddito lordo:** € {risultato['reddito_lordo']:,.2f}")
+    st.write(f"**Imposta ({aliquota}%):** € {risultato['imposta']:,.2f}")
     st.write(f"**Contributi INPS:** € {risultato['contributi']:,.2f}")
     st.write(f"**TOTALE:** € {risultato['totale']:,.2f}")
 
 # ============================================================================
-# RACCOLTA EMAIL CON GOOGLE SHEETS - VERSIONE CORRETTA
+# SEZIONE NEWSLETTER CON DEBUG MIGLIORATO
 # ============================================================================
 st.markdown("---")
 st.header("📬 Ricevi Aggiornamenti Fiscali")
+
+# DEBUG: Mostra le environment variables (solo per debug, RIMUOVI in produzione!)
+with st.expander("🔍 DEBUG - Verifica Configurazione (clicca per espandere)"):
+    st.write("**Environment Variables configurate:**")
+
+    env_vars = {
+        "GSHEETS_SPREADSHEET": os.getenv("GSHEETS_SPREADSHEET"),
+        "GSHEETS_TYPE": os.getenv("GSHEETS_TYPE"),
+        "GSHEETS_CLIENT_EMAIL": os.getenv("GSHEETS_CLIENT_EMAIL"),
+        "GSHEETS_PROJECT_ID": os.getenv("GSHEETS_PROJECT_ID"),
+    }
+
+    for key, value in env_vars.items():
+        if value:
+            if key == "GSHEETS_SPREADSHEET":
+                st.success(f"✅ {key}: {value[:50]}...")
+            elif key == "GSHEETS_CLIENT_EMAIL":
+                st.success(f"✅ {key}: {value}")
+            else:
+                st.success(f"✅ {key}: configurato")
+        else:
+            st.error(f"❌ {key}: MANCANTE!")
+
+    # Verifica PRIVATE_KEY
+    private_key = os.getenv("GSHEETS_PRIVATE_KEY")
+    if private_key:
+        if private_key.startswith('"') and "BEGIN PRIVATE KEY" in private_key:
+            st.success("✅ GSHEETS_PRIVATE_KEY: formato corretto")
+        else:
+            st.warning("⚠️ GSHEETS_PRIVATE_KEY: potrebbe avere formato errato")
+    else:
+        st.error("❌ GSHEETS_PRIVATE_KEY: MANCANTE!")
 
 with st.form("newsletter_form"):
     col_email, col_btn = st.columns([3, 1])
@@ -166,53 +193,48 @@ with st.form("newsletter_form"):
 
     if submitted and email:
         try:
-            # ================================================================
-            # METODO CORRETTO: Crea connessione SENZA passare spreadsheet
-            # La connessione legge spreadsheet da secrets/environment variables
-            # ================================================================
+            st.info("🔄 Tentativo di connessione a Google Sheets...")
 
+            # Crea connessione
             conn = st.connection("gsheets", type=GSheetsConnection)
+            st.success("✅ Connessione creata")
 
-            # Leggi URL spreadsheet da environment variable
+            # Leggi URL spreadsheet
             spreadsheet_url = os.getenv("GSHEETS_SPREADSHEET")
+            st.info(f"📄 Spreadsheet: {spreadsheet_url[:50]}...")
 
-            # ================================================================
-            # LEGGI DATI ESISTENTI
-            # Passa spreadsheet come parametro al metodo read(), NON alla connessione
-            # ================================================================
-
+            # Leggi dati
             try:
+                st.info("🔄 Lettura dati esistenti...")
                 df_esistente = conn.read(
                     spreadsheet=spreadsheet_url,
                     worksheet="Iscrizioni",
-                    ttl=0  # No cache, sempre dati freschi
+                    ttl=0
                 )
-                # Se il foglio è vuoto, crea struttura
+                st.success(f"✅ Lettura OK - {len(df_esistente)} righe trovate")
+
                 if df_esistente.empty or 'Email' not in df_esistente.columns:
                     df_esistente = pd.DataFrame(columns=['Email', 'Data', 'Timestamp'])
-            except:
-                # Se il worksheet non esiste, crea DataFrame vuoto
+            except Exception as e:
+                st.warning(f"⚠️ Errore lettura (creo nuovo): {str(e)}")
                 df_esistente = pd.DataFrame(columns=['Email', 'Data', 'Timestamp'])
 
             # Verifica duplicati
             if email in df_esistente['Email'].values:
-                st.warning("⚠️ Questa email è già iscritta!")
+                st.warning("⚠️ Email già iscritta!")
             else:
-                # Crea nuova iscrizione
+                # Aggiungi email
+                st.info("🔄 Aggiunta nuova email...")
                 nuova_iscrizione = pd.DataFrame({
                     'Email': [email],
                     'Data': [datetime.now().strftime("%Y-%m-%d")],
                     'Timestamp': [datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
                 })
 
-                # Concatena dati
                 df_aggiornato = pd.concat([df_esistente, nuova_iscrizione], ignore_index=True)
 
-                # ================================================================
-                # SCRIVI SU GOOGLE SHEETS
-                # Passa spreadsheet come parametro al metodo update()
-                # ================================================================
-
+                # Scrivi su Google Sheets
+                st.info("🔄 Scrittura su Google Sheets...")
                 conn.update(
                     spreadsheet=spreadsheet_url,
                     worksheet="Iscrizioni",
@@ -223,16 +245,20 @@ with st.form("newsletter_form"):
                 st.balloons()
 
         except Exception as e:
-            st.error(f"❌ Errore: {str(e)}")
-            st.info("💡 Verifica Environment Variables su Render")
+            st.error(f"❌ ERRORE DETTAGLIATO: {str(e)}")
+            st.code(str(e))
+
+            st.markdown("---")
+            st.warning("**Possibili cause:**")
+            st.write("1. Google Sheet non condiviso con service account")
+            st.write("2. Environment Variables mancanti o errate")
+            st.write("3. API Google Sheets/Drive non abilitate")
+
+            st.info("**Verifica:**")
+            st.write("- Espandi 'DEBUG' sopra per vedere le variabili")
+            st.write("- Controlla che l'email service account sia 'Editor' del foglio")
 
 # FOOTER
 st.markdown("---")
-st.info("""
-**ℹ️ Note importanti:**
-- **Aliquota 5%**: valida per 5 anni per nuove attività
-- **Riduzione 35%**: domanda entro 28 febbraio ogni anno
-- **Riduzione 50%**: nuove iscrizioni 2025, valida 36 mesi
-""")
-st.markdown("**Sviluppato da [Fisco Chiaro Consulting](https://fiscochiaroconsulting.it)** | © 2025")
-st.markdown("📧 info@fiscochiaroconsulting.it")
+st.info("**Note**: Aliquota 5% per startup, 15% ordinaria. Riduzioni contributive per Artigiani/Commercianti.")
+st.markdown("**Fisco Chiaro Consulting** | © 2025 | info@fiscochiaroconsulting.it")
